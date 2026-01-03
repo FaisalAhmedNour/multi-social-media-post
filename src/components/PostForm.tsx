@@ -4,13 +4,14 @@ import { useState } from 'react';
 import { postSchema, PostFormData } from '../schemas/post.schema';
 import { submitPost, WebhookServiceError } from '../services/webhook.service';
 import { PlatformSelector } from './PlatformSelector';
-import { ImageInput } from './ImageInput';
+import { FileInput } from './FileInput';
 import { SubmitStatus } from './SubmitStatus';
 
 export const PostForm = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [status, setStatus] = useState<{
-    type: 'success' | 'error' | null;
+    type: 'success' | 'error' | 'loading' | null;
     message: string;
   }>({ type: null, message: '' });
 
@@ -19,11 +20,12 @@ export const PostForm = () => {
     handleSubmit,
     formState: { errors },
     reset,
+    watch,
+    control,
   } = useForm<PostFormData>({
     resolver: zodResolver(postSchema),
     defaultValues: {
       caption: '',
-      imageUrl: '',
       platforms: {
         facebook: false,
         instagram: false,
@@ -33,17 +35,60 @@ export const PostForm = () => {
   });
 
   const onSubmit = async (data: PostFormData) => {
+    console.log('Form submitted with data:', {
+      caption: data.caption,
+      file: data.file ? {
+        name: data.file.name,
+        size: data.file.size,
+        type: data.file.type,
+      } : 'NO FILE',
+      platforms: data.platforms,
+    });
+
+    if (!data.file) {
+      setStatus({
+        type: 'error',
+        message: 'Please select a file to upload.',
+      });
+      return;
+    }
+
     setIsSubmitting(true);
-    setStatus({ type: null, message: '' });
+    setUploadProgress(0);
+    setStatus({ type: 'loading', message: 'Uploading media...' });
 
     try {
-      const response = await submitPost(data);
+      const response = await submitPost(data, (progress) => {
+        setUploadProgress(progress);
+        
+        if (progress < 100) {
+          setStatus({
+            type: 'loading',
+            message: `Uploading: ${progress}%`,
+          });
+        } else {
+          setStatus({
+            type: 'loading',
+            message: 'Processing...',
+          });
+        }
+      });
+      
+      setUploadProgress(0);
       setStatus({
         type: 'success',
         message: response.message || 'Post submitted successfully!',
       });
+      
+      // Reset form including file input
       reset();
+      // Clear file input manually
+      const fileInput = document.getElementById('file') as HTMLInputElement;
+      if (fileInput) {
+        fileInput.value = '';
+      }
     } catch (error) {
+      setUploadProgress(0);
       const errorMessage =
         error instanceof WebhookServiceError
           ? error.message
@@ -64,12 +109,13 @@ export const PostForm = () => {
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
-      className="space-y-6"
+      className="space-y-5"
       noValidate
     >
       <SubmitStatus
         type={status.type}
         message={status.message}
+        progress={uploadProgress}
         onDismiss={handleDismissStatus}
       />
 
@@ -101,7 +147,7 @@ export const PostForm = () => {
         </p>
       </div>
 
-      <ImageInput register={register} error={errors.imageUrl} />
+      <FileInput control={control} watch={watch} error={errors.file} />
 
       <PlatformSelector register={register} errors={errors.platforms} />
 
@@ -136,7 +182,9 @@ export const PostForm = () => {
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
               ></path>
             </svg>
-            Submitting...
+            {status.type === 'loading' && status.message.includes('Uploading')
+              ? 'Uploading...'
+              : 'Submitting...'}
           </span>
         ) : (
           'Submit Post'

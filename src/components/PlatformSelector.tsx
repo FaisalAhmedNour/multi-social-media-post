@@ -1,13 +1,9 @@
-import { UseFormRegister } from 'react-hook-form';
+import { UseFormRegister, FieldErrors } from 'react-hook-form';
 import { PostFormData } from '../schemas/post.schema';
 
 interface PlatformSelectorProps {
   register: UseFormRegister<PostFormData>;
-  errors?: {
-    platforms?: {
-      message?: string;
-    };
-  };
+  errors?: FieldErrors<PostFormData>['platforms'];
 }
 
 export const PlatformSelector = ({
@@ -49,9 +45,9 @@ export const PlatformSelector = ({
         </label>
       </div>
 
-      {errors?.platforms && (
+      {errors && 'message' in errors && errors.message && (
         <p className="text-sm text-red-600 mt-1">
-          {errors.platforms.message}
+          {errors.message}
         </p>
       )}
     </div>

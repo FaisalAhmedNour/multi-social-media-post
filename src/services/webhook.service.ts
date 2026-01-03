@@ -1,17 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import { PostFormData } from '../schemas/post.schema';
 
-export interface WebhookPayload {
-  text: string;
-  imageUrl: string;
-  platforms: {
-    facebook: boolean;
-    instagram: boolean;
-    linkedin: boolean;
-  };
-  scheduleAt: null;
-}
-
 export interface WebhookResponse {
   success: boolean;
   message?: string;
@@ -28,8 +17,13 @@ export class WebhookServiceError extends Error {
   }
 }
 
+const getMediaType = (file: File): 'image' | 'video' => {
+  return file.type.startsWith('image/') ? 'image' : 'video';
+};
+
 export const submitPost = async (
-  data: PostFormData
+  data: PostFormData,
+  onProgress?: (progress: number) => void
 ): Promise<WebhookResponse> => {
   const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL;
 
@@ -39,25 +33,44 @@ export const submitPost = async (
     );
   }
 
-  const payload: WebhookPayload = {
-    text: data.caption,
-    imageUrl: data.imageUrl,
-    platforms: {
+  const formData = new FormData();
+  formData.append('file', data.file);
+  formData.append('text', data.caption);
+  formData.append('mediaType', getMediaType(data.file));
+  formData.append(
+    'platforms',
+    JSON.stringify({
       facebook: data.platforms.facebook,
       instagram: data.platforms.instagram,
       linkedin: data.platforms.linkedin,
-    },
-    scheduleAt: null,
-  };
+    })
+  );
 
   try {
+    console.log('Submitting form data:', {
+      file: formData.get('file') ? {
+        name: (formData.get('file') as File)?.name,
+        size: (formData.get('file') as File)?.size,
+        type: (formData.get('file') as File)?.type,
+      } : 'NO FILE',
+      text: formData.get('text'),
+      mediaType: formData.get('mediaType'),
+      platforms: formData.get('platforms'),
+    });
+
     const response = await axios.post<WebhookResponse>(
       webhookUrl,
-      payload,
+      formData,
       {
-        timeout: 10000,
-        headers: {
-          'Content-Type': 'application/json',
+        timeout: 60000, // 60 seconds for large file uploads
+        // Don't set Content-Type manually - Axios will set it with the correct boundary
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total && onProgress) {
+            const progress = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            onProgress(progress);
+          }
         },
       }
     );
@@ -72,7 +85,7 @@ export const submitPost = async (
 
       if (axiosError.code === 'ECONNABORTED') {
         throw new WebhookServiceError(
-          'Request timed out. Please check your connection and try again.',
+          'Upload timed out. The file may be too large or your connection is slow. Please try again.',
           undefined,
           true
         );
@@ -87,8 +100,9 @@ export const submitPost = async (
       }
 
       const statusCode = axiosError.response.status;
+      const errorData = axiosError.response.data as { message?: string } | undefined;
       const errorMessage =
-        axiosError.response.data?.message ||
+        errorData?.message ||
         `Server error (${statusCode}). Please try again later.`;
 
       throw new WebhookServiceError(errorMessage, statusCode, false);
